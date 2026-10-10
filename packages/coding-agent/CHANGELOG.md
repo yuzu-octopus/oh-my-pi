@@ -174,6 +174,7 @@
 - Fixed resumed xAI, Factory Droid and OpenAI sessions forgetting earlier reasoning on their first request, while a retry after a stale Responses item error still rebuilds history ([#15148](https://github.com/can1357/oh-my-pi/pull/15148) by [@will-bogusz](https://github.com/will-bogusz))
 - Fixed the startup default ignoring the model a provider's discovery names as the account's default: with no model chosen, Devin Pro now starts on SWE-2 at High instead of SWE-1.6 ([#15115](https://github.com/can1357/oh-my-pi/pull/15115) by [@will-bogusz](https://github.com/will-bogusz))
 - Fixed `artifact://` recovery reads re-inlining unbounded text per call: `read` now bounds the total inline bytes one call returns across all of its ranges (default 32 KiB, `read.pageMaxBytes`), cutting a page on a line boundary and naming the next range to read on the same artifact ([#15062](https://github.com/can1357/oh-my-pi/issues/15062))
+- Fixed `artifact://` recovery reads re-inlining unbounded text per call: `read` now bounds the total inline bytes one call returns across all of its ranges (default 32 KiB, `read.pageMaxBytes`), cutting a page on a line boundary and naming the next range to read on the same artifact ([#15172](https://github.com/can1357/oh-my-pi/pull/15172) by [@yuzu-octopus](https://github.com/yuzu-octopus))
 
 ## [18.8.7] - 2026-10-09
 
