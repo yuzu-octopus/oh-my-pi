@@ -372,9 +372,9 @@ function formatReadPageBudgetNotice(
 	const selection = `${rawSelector ? "raw:" : ""}${remaining.map(formatLineRangeBound).join(",")}`;
 	const last = visibleSpans.at(-1);
 	if (last === undefined) {
-		return `[Read page budget (${budget}) reached before any requested line was shown; use ${selectorBase}:${selection} to continue]`;
+		return `[Read page budget (${budget}) reached before any requested line was shown; Use ${selectorBase}:${selection} to continue]`;
 	}
-	return `[Read page budget (${budget}) reached after lines ${last.startLine}-${last.endLine}; use ${selectorBase}:${selection} to continue]`;
+		return `[Read page budget (${budget}) reached after lines ${last.startLine}-${last.endLine}; Use ${selectorBase}:${selection} to continue]`;
 }
 
 /**
@@ -391,9 +391,9 @@ function formatUndeliverableRangeNotice(
 	const rawTarget = `${selectorBase}:raw:${range.startLine}-${range.startLine}`;
 	const rest =
 		range.endLine !== undefined && range.endLine > range.startLine
-			? ` use ${selectorBase}:${range.startLine + 1}-${range.endLine} for the rest of the range.`
+			? ` Use ${selectorBase}:${range.startLine + 1}-${range.endLine} for the rest of the range.`
 			: "";
-	return `[Line ${range.startLine} is ${formatBytes(firstLineBytes)} and cannot fit the ${formatBytes(pageBytes)} read page budget; range ${formatLineRangeBound(range)} skipped. use ${rawTarget} to read that line on its own (byte-capped if it exceeds the budget).${rest}]`;
+	return `[Line ${range.startLine} is ${formatBytes(firstLineBytes)} and cannot fit the ${formatBytes(pageBytes)} read page budget; range ${formatLineRangeBound(range)} skipped. Use ${rawTarget} to read that line on its own (byte-capped if it exceeds the budget).${rest}]`;
 }
 
 /**
