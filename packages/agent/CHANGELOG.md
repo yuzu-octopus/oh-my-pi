@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+
+- Replaced `(event.message as any).errorMessage` with proper `'errorMessage' in message` narrowing in the turn_end handler
 
 ## [18.12.0] - 2026-10-17
 

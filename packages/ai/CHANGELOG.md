@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+
+- Replaced `as any` casts with proper types in cursor.ts debugReplacer, handleShellStreamArgs, google-gemini-cli.ts, and google-shared.ts, so type checking is preserved in hot paths
 
 ## [18.12.1] - 2026-10-17
 
