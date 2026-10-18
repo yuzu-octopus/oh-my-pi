@@ -57,9 +57,11 @@ describe("ToolExecutionComponent write repaint seam", () => {
 	});
 
 	it("does not repaint a collapsed preview that fits the streaming window", () => {
-		// 12 lines render top-anchored without a tail window, so the first result
-		// does not re-anchor the frame; wiping scrollback would be gratuitous.
-		const { component, requestRender } = makeComponent(writeArgs(12));
+		// Two short lines render as two visual rows — within the collapsed
+		// window's exact-row budget — so the preview is top-anchored with no
+		// tail window for the first result to re-anchor; repainting would wipe
+		// scrollback for a frame the user never saw scroll.
+		const { component, requestRender } = makeComponent(writeArgs(2));
 		component.render(80);
 
 		component.updateResult(partialWriteResult(), true);

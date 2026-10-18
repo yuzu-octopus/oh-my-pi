@@ -3,20 +3,49 @@ import * as themeModule from "@oh-my-pi/pi-tui/theme";
 import { writeToolRenderer } from "@oh-my-pi/pi-tui/tools/write";
 import type { HighlightStream } from "@oh-my-pi/pi-natives";
 
-const stripAnsi = (s: string): string => s.replace(/\[[0-9;]*m/g, "");
+const stripAnsi = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
 const hasLine = (lines: readonly string[], n: number): boolean =>
 	new RegExp(`\\bline ${n}\\b`).test(stripAnsi(lines.join("\n")));
+/** Card rows (the framed body), excluding the header and border rows. */
+const cardRows = (lines: readonly string[]): string[] => lines.filter(line => stripAnsi(line).includes("│"));
 
 /**
- * Reference algorithm: the pre-incremental formatter normalized the whole
- * payload, split every line, and sliced the tail window. The incremental
- * collapsed path must produce byte-identical rows for the same content.
+ * Viewport the suite renders at. `previewWindowRows()` is `rows - 20` with a
+ * floor of 6, so 32 rows pins the collapsed budget at the 12 that
+ * `PREVIEW_LIMITS.EXPANDED_LINES` caps it to — the value every assertion below
+ * uses, independent of the test runner's terminal.
+ */
+const VIEWPORT_ROWS = 32;
+/** Collapsed visual-row budget at {@link VIEWPORT_ROWS}. */
+const BUDGET = 12;
+
+/**
+ * Reference algorithm for the collapsed window: the newest `BUDGET` visual
+ * rows of the payload, with the lines entirely above the window reported by
+ * the "earlier lines" marker. The fixtures below use one row per line, so the
+ * window is the last `BUDGET` logical lines.
  */
 function referenceWindow(content: string): { total: number; start: number; visible: string[] } {
 	const lines = content.replace(/\r/g, "").split("\n");
 	const total = lines.length;
-	const start = Math.max(0, total - 12);
+	const start = Math.max(0, total - BUDGET);
 	return { total, start, visible: lines.slice(start) };
+}
+/**
+ * Pin `process.stdout.rows` for the duration of a render so the collapsed
+ * budget never follows the runner's terminal. Bun exposes `rows` as an
+ * accessor, which `vi.spyOn` cannot patch, so the original descriptor is
+ * captured and restored instead of deleted.
+ */
+function withViewportRows<T>(rows: number, run: () => T): T {
+	const original = Object.getOwnPropertyDescriptor(process.stdout, "rows");
+	Object.defineProperty(process.stdout, "rows", { configurable: true, get: () => rows });
+	try {
+		return run();
+	} finally {
+		if (original) Object.defineProperty(process.stdout, "rows", original);
+		else Reflect.deleteProperty(process.stdout, "rows");
+	}
 }
 
 describe("write streaming preview incremental line tracking", () => {
@@ -36,12 +65,15 @@ describe("write streaming preview incremental line tracking", () => {
 		return uiTheme;
 	}
 
+	/** Render the collapsed streaming card at the pinned viewport. */
 	function renderCollapsed(content: string, options: { expanded: boolean; isPartial: boolean; spinnerFrame: number }) {
-		return getUiTheme().then(uiTheme => {
-			const component = writeToolRenderer.renderCall({ path: "/tmp/inc.ts", content }, options, uiTheme);
-			if (!component) throw new Error("expected a rendered component for a non-xdev write path");
-			return component.render(120);
-		});
+		return getUiTheme().then(uiTheme =>
+			withViewportRows(VIEWPORT_ROWS, () => {
+				const component = writeToolRenderer.renderCall({ path: "/tmp/inc.ts", content }, options, uiTheme);
+				if (!component) throw new Error("expected a rendered component for a non-xdev write path");
+				return component.render(120);
+			}),
+		);
 	}
 
 	it("renders agent messages and their receipt as a message card", async () => {
@@ -201,31 +233,55 @@ describe("write streaming preview incremental line tracking", () => {
 		settled.render(120);
 		expect(pushes).toEqual(["const solo = 1;"]);
 	});
-
 	it("normalizes CRLF only in the rendered tail, with correct line numbers", async () => {
 		const options = { expanded: false, isPartial: true, spinnerFrame: 0 };
 		const content = Array.from({ length: 20 }, (_, i) => `line ${i + 1}`).join("\r\n");
 		const rendered = await renderCollapsed(content, options);
 		const text = stripAnsi(rendered.join("\n"));
 		expect(text).not.toContain("\r");
-		// 20 lines → window is lines 9..20.
+		// 20 lines → the newest `BUDGET` rows are lines 9..20.
 		expect(text).toContain("… (8 earlier lines)");
 		expect(hasLine(rendered, 8)).toBe(false);
 		expect(hasLine(rendered, 9)).toBe(true);
 		expect(hasLine(rendered, 20)).toBe(true);
 	});
 
-	it("counts a trailing newline as a final empty row, matching the reference", async () => {
+	it("counts the trailing newline as a final empty row but does not render it", async () => {
+		// The final `\n` closes line 13; it adds no visible row, so the window is
+		// the newest `BUDGET` complete lines and the marker counts the rest.
 		const options = { expanded: false, isPartial: true, spinnerFrame: 0 };
 		const content = `${Array.from({ length: 13 }, (_, i) => `line ${i + 1}`).join("\n")}\n`;
 		const rendered = await renderCollapsed(content, options);
-		const { total, start } = referenceWindow(content);
-		expect(total).toBe(14);
-		expect(start).toBe(2);
 		const text = stripAnsi(rendered.join("\n"));
-		expect(text).toContain("… (2 earlier lines)");
+		expect(text).toContain("… (1 earlier line)");
 		expect(hasLine(rendered, 13)).toBe(true);
-		expect(hasLine(rendered, 2)).toBe(false);
+		expect(hasLine(rendered, 2)).toBe(true);
+		expect(hasLine(rendered, 1)).toBe(false);
+		expect(cardRows(rendered)).toHaveLength(BUDGET + 2);
+	});
+
+	it("holds the collapsed height steady as wrapped prose streams in", async () => {
+		// The regression (#16033): the collapsed window budgeted logical lines and
+		// then wrapped them, so every long line entering or leaving the window
+		// changed the block height (19↔20 rows on the reproduction). Capping at
+		// exact visual rows keeps one constant height for the whole stream.
+		const options = { expanded: false, isPartial: true, spinnerFrame: 0 };
+		// Lines wrap between one and four rows, so a window that budgeted
+		// logical lines changes height whenever a differently-wrapped line
+		// enters or leaves it.
+		const words = Array.from({ length: 40 }, (_, i) => `w${i + 1}`);
+		const lines = Array.from({ length: 40 }, (_, i) => words.slice(0, 4 + ((i * 7) % 36)).join(" "));
+		const payload = lines.join("\n");
+
+		const heights: number[] = [];
+		for (let end = 1; end <= payload.length; end += 5) {
+			const rendered = await renderCollapsed(payload.slice(0, end), options);
+			heights.push(cardRows(rendered).length);
+		}
+		// Once the window is full its height must never change again.
+		const settled = heights.slice(Math.floor(heights.length / 2));
+		expect(new Set(settled).size).toBe(1);
+		expect(settled[0]).toBe(BUDGET + 2);
 	});
 
 	it("renders carriage-return-only content like the previous normalized empty payload", async () => {

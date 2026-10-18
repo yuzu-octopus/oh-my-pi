@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- `write` tool: the collapsed streaming preview keeps a constant height instead of growing as wrapped lines scroll through the window
+
 ## [18.12.1] - 2026-10-17
 
 ### Breaking Changes

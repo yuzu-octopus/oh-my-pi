@@ -21,6 +21,7 @@ import {
 	PREVIEW_LIMITS,
 	type RenderedStringCache,
 	replaceTabs,
+	previewWindowRows,
 	shortenPath,
 	TRUNCATE_LENGTHS,
 	truncateToWidth,
@@ -342,47 +343,84 @@ function formatStreamingContent(
 	expanded: boolean,
 	language: string | undefined,
 	uiTheme: Theme,
+	width: number,
 	spinnerFrame?: number,
 	cache?: RenderedStringCache,
 	streamKey?: WriteStreamingPreviewStateCarrier,
 	argsComplete?: boolean,
 ): string {
 	if (!content) return "";
-	const bodyText = cachedRenderedString(cache, uiTheme, expanded, language ?? "", content, () => {
-		const state = updateStreamingPreview(streamKey, content, language, uiTheme, argsComplete === true);
-		let totalLines: number;
-		let startIndex: number;
-		let visibleLines: string[];
-		if (state) {
-			totalLines = state.lineCount;
-			startIndex = expanded ? 0 : Math.max(0, totalLines - PREVIEW_LIMITS.EXPANDED_LINES);
-			const flushed = argsComplete === true && state.finalFlushedLength === content.length;
-			const trailingLine = flushed ? state.finalTrailing : content.slice(state.completeLength).replace(/\r/g, "");
-			if (totalLines === 1 && trailingLine.length === 0) return "";
-			visibleLines = [...state.highlightedLines.slice(startIndex), trailingLine];
-		} else {
-			const normalized = normalizeDisplayText(content);
-			if (normalized.length === 0) return "";
-			const lines = normalized.split("\n");
-			totalLines = lines.length;
-			startIndex = expanded ? 0 : Math.max(0, totalLines - PREVIEW_LIMITS.EXPANDED_LINES);
-			visibleLines = highlightCode(lines.slice(startIndex).join("\n"), language);
-		}
-		const hidden = startIndex;
-		const lineNumberWidth = Math.max(WRITE_GUTTER_MIN_WIDTH, String(totalLines).length);
+	// Collapsed tails are capped in VISUAL rows, not logical lines: a wrapped
+	// prose line contributes several rows, so a line-count window changes the
+	// block height as long lines enter and leave it. The window is the newest
+	// `budget` visual rows, walked backward from the streaming edge so its cost
+	// stays proportional to what is shown. One budget serves both streaming
+	// paths, so a short terminal caps them identically.
+	const budget = Math.min(PREVIEW_LIMITS.EXPANDED_LINES, previewWindowRows());
+	const bodyText = cachedRenderedString(
+		cache,
+		uiTheme,
+		expanded,
+		`${language ?? ""}:${width}:${budget}`,
+		content,
+		() => {
+			const state = updateStreamingPreview(streamKey, content, language, uiTheme, argsComplete === true);
+			let totalLines: number;
+			let visibleLines: string[];
+			if (state) {
+				totalLines = state.lineCount;
+				const flushed = argsComplete === true && state.finalFlushedLength === content.length;
+				const trailingLine = flushed ? state.finalTrailing : content.slice(state.completeLength).replace(/\r/g, "");
+				// The partial tail is not yet in `lineCount` (no newline), so it is
+				// budgeted as the newest row instead of appended: a complete line
+				// always yields exactly `budget` rows, so the block height stops
+				// oscillating line-by-line as the stream advances.
+				if (totalLines === 1 && trailingLine.length === 0) return "";
+				visibleLines = trailingLine.length > 0 ? [...state.highlightedLines, trailingLine] : state.highlightedLines;
+			} else {
+				const normalized = normalizeDisplayText(content);
+				if (normalized.length === 0) return "";
+				const lines = normalized.split("\n");
+				totalLines = lines.length;
+				visibleLines = highlightCode(lines.join("\n"), language);
+			}
+			const lineNumberWidth = Math.max(WRITE_GUTTER_MIN_WIDTH, String(totalLines).length);
+			const rows = visibleLines.map((line, index) => {
+				const gutter = uiTheme.fg("dim", `${String(index + 1).padStart(lineNumberWidth, " ")} `);
+				return `${gutter}${replaceTabs(line)}`;
+			});
 
-		let text = "\n\n";
-		if (hidden > 0) {
-			text += `${uiTheme.fg("dim", `… (${hidden} earlier line${hidden === 1 ? "" : "s"})`)}\n`;
-		}
-		for (let i = 0; i < visibleLines.length; i++) {
-			const lineNum = startIndex + i + 1;
-			const gutter = uiTheme.fg("dim", `${String(lineNum).padStart(lineNumberWidth, " ")} `);
-			const body = replaceTabs(visibleLines[i] ?? "");
-			text += `${gutter}${body}\n`;
-		}
-		return text;
-	});
+			// Cap the window at exactly `budget` visual rows so a wrapped line
+			// entering or leaving it cannot change the block height, and count the
+			// logical lines that start above the window so the marker reports the
+			// true hidden count. A wrapped line cut at the top keeps its lower rows,
+			// exactly as a terminal tail does; the topmost row is then the
+			// continuation of a line the marker already counts as hidden.
+			const wrappedByLine = rows.map(row => wrapWritePreviewRows([row], width));
+			const wrappedRows = wrappedByLine.flat();
+			let firstKeptRow = 0;
+			let hidden = 0;
+			if (!expanded && wrappedRows.length > budget) {
+				firstKeptRow = wrappedRows.length - budget;
+				// Count only lines whose rows are entirely above the window; the
+				// line straddling the cut stays visible with its real line number.
+				let consumed = 0;
+				for (const lineRows of wrappedByLine) {
+					if (consumed + lineRows.length > firstKeptRow) break;
+					consumed += lineRows.length;
+					hidden++;
+				}
+			}
+			const shown = expanded ? wrappedRows : wrappedRows.slice(firstKeptRow);
+
+			let text = "\n\n";
+			if (hidden > 0) {
+				text += `${uiTheme.fg("dim", `… (${hidden} earlier line${hidden === 1 ? "" : "s"})`)}\n`;
+			}
+			for (const row of shown) text += `${row}\n`;
+			return text;
+		},
+	);
 	if (bodyText.length === 0) return "";
 	// The animated glyph lives on this trailing line — inside the transcript's
 	// volatile-tail holdback — never in the header: an animating head row pins
@@ -670,6 +708,7 @@ export const writeToolRenderer = {
 							Boolean(options?.expanded),
 							lang,
 							uiTheme,
+							contentWidth,
 							options?.spinnerFrame,
 							streamingCache,
 							// `options` is the ToolExecutionComponent's persistent
@@ -684,7 +723,7 @@ export const writeToolRenderer = {
 				while (bodyLines.length > 0 && bodyLines[0].trim() === "") bodyLines.shift();
 				return {
 					header,
-					sections: bodyLines.length > 0 ? [{ content: wrapWritePreviewRows(bodyLines, contentWidth) }] : [],
+					sections: bodyLines.length > 0 ? [{ content: bodyLines }] : [],
 					phase: "pending",
 					borderColor: "borderMuted",
 				};
@@ -875,6 +914,9 @@ export const writeToolRenderer = {
 	// tail rows already committed to viewport/native scrollback would survive
 	// as stale content above the new frame without a full replay. Expanded and
 	// short previews stay top-anchored and skip the (scrollback-wiping) reset.
+	// The predicate uses the same viewport-capped budget as the renderer: on a
+	// short terminal a 7-line collapsed write is already tail-anchored.
 	forceFirstResultViewportRepaint: (args: unknown, options: RenderResultOptions) =>
-		!options.expanded && exceedsLineCount(writeContentOf(args), PREVIEW_LIMITS.EXPANDED_LINES),
+		!options.expanded &&
+		exceedsLineCount(writeContentOf(args), Math.min(PREVIEW_LIMITS.EXPANDED_LINES, previewWindowRows())),
 } satisfies ToolRenderer<WriteRenderArgs, WriteToolDetails>;
