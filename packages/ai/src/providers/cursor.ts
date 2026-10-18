@@ -953,7 +953,8 @@ function debugReplacer(key: string, value: unknown): unknown {
 		value instanceof Uint8Array ||
 		(value && typeof value === "object" && "type" in value && value.type === "Buffer")
 	) {
-		const bytes = value instanceof Uint8Array ? value : new Uint8Array((value as any).data);
+		const data = value instanceof Uint8Array ? null : "data" in value ? value.data : null;
+		const bytes = value instanceof Uint8Array ? value : Array.isArray(data) ? new Uint8Array(data) : new Uint8Array(0);
 		const asHex = key === "blobId" || key === "blob_id" || key.endsWith("Id") || key.endsWith("_id");
 		return debugBytes(bytes, asHex);
 	}
@@ -2167,7 +2168,7 @@ async function handleShellStreamArgs(
 	const normalizedArgs: ShellArgs = { ...args, workingDirectory: normalizedWorkingDirectory };
 	const startTs = performance.now();
 	log("shellStream", "start", {
-		command: (args as any).command,
+		command: args.command,
 		workingDirectory: normalizedWorkingDirectory,
 		execId: execMsg.execId,
 		hasExecHandlers: !!execHandlers,
@@ -2276,14 +2277,14 @@ async function handleShellStreamArgs(
 	const handler = streamHandler ? (shellArgs: ShellArgs) => streamHandler(shellArgs, streamCallbacks) : batchHandler;
 
 	const { execResult } = await resolveExecHandler(
-		args as any,
+		args,
 		handler as typeof batchHandler,
 		onToolResult,
-		toolResult => buildShellResultFromToolResult(normalizedArgs as any, toolResult),
+		toolResult => buildShellResultFromToolResult(normalizedArgs, toolResult),
 		reason =>
-			buildShellRejectedResult((normalizedArgs as any).command, (normalizedArgs as any).workingDirectory, reason),
+			buildShellRejectedResult(normalizedArgs.command, normalizedArgs.workingDirectory, reason),
 		error =>
-			buildShellFailureResult((normalizedArgs as any).command, (normalizedArgs as any).workingDirectory, error),
+			buildShellFailureResult(normalizedArgs.command, normalizedArgs.workingDirectory, error),
 		{ toolCallId: args.toolCallId, toolName: "bash" },
 	);
 

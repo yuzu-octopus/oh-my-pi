@@ -897,7 +897,7 @@ export function buildGoogleGenerateContentParams<T extends "google-generative-ai
 		const cfg: ThinkingConfig = { includeThoughts: thinking.enabled && !options.hideThinkingSummary };
 		if (thinking.level !== undefined) {
 			// GoogleThinkingLevel mirrors the SDK's ThinkingLevel string enum values 1:1.
-			cfg.thinkingLevel = thinking.level as ThinkingLevel;
+		cfg.thinkingLevel = thinking.level;
 		} else if (thinking.budgetTokens !== undefined) {
 			cfg.thinkingBudget = thinking.budgetTokens;
 		}
